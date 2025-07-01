@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Real-Time Bank App</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #0f0; padding: 20px; }
+    input, button, textarea { font-size: 16px; margin: 4px; }
+    .job { border: 1px solid #0f0; padding: 10px; margin: 10px 0; }
+    .log { background: #222; padding: 10px; margin-top: 20px; white-space: pre-wrap; border-radius: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>🌍 Realtime Bank App</h1>
+<p>User: <input id="username" placeholder="Your name" oninput="loadUser()" /></p>
+<p>Balance: $<span id="balance">0</span></p>
+<p>Debt: $<span id="debt">0</span></p>
+<p>Loan Status: <span id="loanStatus">Loading...</span></p>
+
+<button onclick="work()">Work</button>
+<button onclick="getLoan()">Get Loan</button>
+
+<h2>🧾 Post a Job</h2>
+<input id="jobTitle" placeholder="Job Title" />
+<input id="jobPay" type="number" placeholder="Pay" /><br>
+<textarea id="jobDesc" placeholder="Job Description" rows="3" cols="40"></textarea><br>
+<button onclick="postJob()">Post Job</button>
+
+<h2>📋 Available Jobs</h2>
+<div id="jobBoard"></div>
+
+<div class="log" id="log"></div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.5.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.5.2/firebase-database-compat.js"></script>
+
+<script>
+  // 🔧 Replace the values below with your Firebase config from your project settings
+  const firebaseConfig = {
+  apiKey: "AIzaSyARi8vPI9ywj-ysCq6rif510IzdYqXbK3g",
+  authDomain: "bank-8b556.firebaseapp.com",
+  databaseURL: "https://bank-8b556-default-rtdb.firebaseio.com",
+  projectId: "bank-8b556",
+  storageBucket: "bank-8b556.firebasestorage.app",
+  messagingSenderId: "834440794933",
+  appId: "1:834440794933:web:9879989f8a757a1d7cf27c",
+  measurementId: "G-460KL9LMPT"
+};
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  let currentUser = "player";
+  const loanCooldownMs = 1000 * 60 * 60 * 24 * 14; // 14 days in milliseconds
+  let logText = "";
+
+  function now() {
+    return new Date().getTime();
+  }
+
+  function log(msg) {
+    logText = `[${new Date().toLocaleTimeString()}] ${msg}\n` + logText;
+    document.getElementById("log").textContent = logText;
+  }
+
+  function updateUI(userData) {
+    document.getElementById("balance").textContent = userData.balance || 0;
+    document.getElementById("debt").textContent = userData.debt || 0;
+
+    const timeSinceLastLoan = now() - (userData.lastLoan || 0);
+    const daysRemaining = Math.ceil((loanCooldownMs - timeSinceLastLoan) / (1000 * 60 * 60 * 24));
+
+    document.getElementById("loanStatus").textContent =
+      timeSinceLastLoan >= loanCooldownMs
+        ? "Ready"
+        : `Wait ${daysRemaining} day(s)`;
+  }
+
+  function loadUser() {
+    currentUser = document.getElementById("username").value.trim() || "player";
+    const userRef = db.ref("users/" + currentUser);
+    userRef.on("value", (snap) => {
+      if (!snap.exists()) {
+        db.ref("users/" + currentUser).set({ balance: 0, debt: 0, lastLoan: 0 });
+      } else {
+        updateUI(snap.val());
+      }
+    });
+  }
+
+  function work() {
+    const userRef = db.ref("users/" + currentUser);
+    userRef.once("value").then((snap) => {
+      const data = snap.val();
+      data.balance += 100;
+      userRef.set(data);
+      log("You worked and earned $100.");
+    });
+  }
+
+  function getLoan() {
+    const userRef = db.ref("users/" + currentUser);
+    userRef.once("value").then((snap) => {
+      const data = snap.val();
+      if (now() - data.lastLoan < loanCooldownMs) {
+        log("Loan not ready yet. Please wait.");
+        return;
+      }
+      data.balance += 500;
+      data.debt += 500;
+      data.lastLoan = now();
+      userRef.set(data);
+      log("You took a loan of $500.");
+    });
+  }
+
+  function postJob() {
+    const title = document.getElementById("jobTitle").value.trim();
+    const pay = parseInt(document.getElementById("jobPay").value);
+    const desc = document.getElementById("jobDesc").value.trim();
+
+    if (!title || isNaN(pay) || !desc) {
+      log("Please fill out all job fields.");
+      return;
+    }
+
+    const job = {
+      title,
+      pay,
+      desc,
+      poster: currentUser
+    };
+
+    db.ref("jobs").push(job);
+    log("Job posted.");
+  }
+
+  function renderJobs(snapshot) {
+    const jobBoard = document.getElementById("jobBoard");
+    jobBoard.innerHTML = "";
+    snapshot.forEach((jobSnap) => {
+      const job = jobSnap.val();
+      const key = jobSnap.key;
+      const div = document.createElement("div");
+      div.className = "job";
+      div.innerHTML = `
+        <strong>${job.title}</strong> - $${job.pay}<br>
+        <em>${job.desc}</em><br>
+        Posted by: ${job.poster}<br>
+        <button onclick="doJob('${key}', ${job.pay})">Do Job</button>
+      `;
+      jobBoard.appendChild(div);
+    });
+  }
+
+  function doJob(jobId, pay) {
+    const userRef = db.ref("users/" + currentUser);
+    userRef.once("value").then((snap) => {
+      const data = snap.val();
+      data.balance += pay;
+      userRef.set(data);
+      db.ref("jobs/" + jobId).remove();
+      log(`You completed a job for $${pay}`);
+    });
+  }
+
+  // Listen for jobs updates
+  db.ref("jobs").on("value", renderJobs);
+
+  // Load initial user data
+  loadUser();
+</script>
+
+</body>
+</html>
