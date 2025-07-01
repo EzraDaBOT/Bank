@@ -9,6 +9,8 @@
     .tab { margin-top: 20px; }
     h2 { margin-bottom: 0; }
     .job { margin: 5px 0; border-bottom: 1px dashed #0f0; padding-bottom: 5px; }
+    .job-accepted { color: #f90; }
+    .small-btn { font-size: 14px; padding: 3px 6px; }
   </style>
 </head>
 <body>
@@ -26,10 +28,11 @@
   <button onclick="logout()">Logout</button>
 
   <div id="adminPanel" class="tab hidden">
-    <h2>Admin Panel</h2>
+    <h2>Admin Panel <button onclick="toggleAdminPanelVisibility()" class="small-btn">Toggle Hide</button></h2>
     <div id="userList"></div>
     <h3>Create Job (free)</h3>
     <input id="adminJob" placeholder="Job name" />
+    <input id="adminPaycheck" type="number" placeholder="Paycheck amount ($)" style="width: 140px" />
     <button onclick="createJob(true)">Post Job</button>
   </div>
 
@@ -37,6 +40,7 @@
     <h2>Employer Panel</h2>
     <p>Create Job (costs $100)</p>
     <input id="employerJob" placeholder="Job name" />
+    <input id="employerPaycheck" type="number" placeholder="Paycheck amount ($)" style="width: 140px" />
     <button onclick="createJob(false)">Post Job</button>
   </div>
 
@@ -70,6 +74,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 let currentEmail = null;
+let adminPanelVisible = true;
 
 function encodeEmail(email) {
   return email.replace(/\./g, '_');
@@ -111,11 +116,20 @@ function handleLogin(signUp) {
       document.getElementById("balance").textContent = data.balance;
 
       if (data.role === "admin") {
-        document.getElementById("adminPanel").classList.remove("hidden");
+        if (adminPanelVisible) {
+          document.getElementById("adminPanel").classList.remove("hidden");
+        } else {
+          document.getElementById("adminPanel").classList.add("hidden");
+        }
         document.getElementById("employerPanel").classList.add("hidden");
         document.getElementById("userPanel").classList.add("hidden");
         loadAdminPanel();
+      } else if (data.role === "worker") {
+        document.getElementById("employerPanel").classList.add("hidden");
+        document.getElementById("userPanel").classList.remove("hidden");
+        document.getElementById("adminPanel").classList.add("hidden");
       } else {
+        // employer
         document.getElementById("employerPanel").classList.remove("hidden");
         document.getElementById("userPanel").classList.remove("hidden");
         document.getElementById("adminPanel").classList.add("hidden");
@@ -162,17 +176,38 @@ function adjustBalance(userKey, action) {
     let newBalance = user.balance;
 
     if (action === 'add') newBalance += amount;
-    else if (action === 'subtract') newBalance = Math.max(0, user.balance - amount);
+    else if (action === 'subtract') newBalance = Math.max(-9999999, user.balance - amount); // allow debt
     else if (action === 'zero') newBalance = 0;
 
     userRef.update({ balance: newBalance }).then(loadAdminPanel);
   });
 }
 
+function toggleAdminPanelVisibility() {
+  adminPanelVisible = !adminPanelVisible;
+  const adminPanel = document.getElementById("adminPanel");
+  if (adminPanelVisible) adminPanel.classList.remove("hidden");
+  else adminPanel.classList.add("hidden");
+}
+
 function createJob(isAdmin) {
   const inputId = isAdmin ? "adminJob" : "employerJob";
+  const paycheckId = isAdmin ? "adminPaycheck" : "employerPaycheck";
   const jobName = document.getElementById(inputId).value.trim();
-  if (!jobName) return;
+  const paycheckRaw = document.getElementById(paycheckId).value.trim();
+  if (!jobName) {
+    alert("Please enter a job name.");
+    return;
+  }
+  if (paycheckRaw === '') {
+    alert("Please enter a paycheck amount (can be negative).");
+    return;
+  }
+  const paycheck = parseFloat(paycheckRaw);
+  if (isNaN(paycheck)) {
+    alert("Paycheck amount must be a number.");
+    return;
+  }
 
   const userKey = encodeEmail(currentEmail);
   const userRef = db.ref("users/" + userKey);
@@ -185,7 +220,11 @@ function createJob(isAdmin) {
 
     const job = {
       name: jobName,
-      poster: user.email
+      paycheck: paycheck,
+      poster: userKey,
+      acceptedBy: null, // no one accepted yet
+      payments: 0,     // total payments made
+      paymentsHistory: [] // array of payments {amount, date}
     };
 
     const jobRef = db.ref("jobs").push();
@@ -193,6 +232,9 @@ function createJob(isAdmin) {
       if (!isAdmin) {
         userRef.update({ balance: user.balance - 100 });
       }
+      // clear inputs
+      document.getElementById(inputId).value = '';
+      document.getElementById(paycheckId).value = '';
       loadJobs();
     });
   });
@@ -200,17 +242,165 @@ function createJob(isAdmin) {
 
 function loadJobs() {
   const list = document.getElementById("jobList");
+  const userKey = encodeEmail(currentEmail);
   db.ref("jobs").once('value').then(snapshot => {
     list.innerHTML = '';
     snapshot.forEach(childSnap => {
       const job = childSnap.val();
+      const jobKey = childSnap.key;
+      const accepted = job.acceptedBy !== null;
+      const isAcceptedByCurrent = job.acceptedBy === userKey;
+
+      const totalPaid = job.payments || 0;
+      const paycheck = job.paycheck || 0;
+      const remainingPayment = paycheck - totalPaid;
+
       const div = document.createElement("div");
       div.className = "job";
-      div.textContent = `${job.name} (by ${job.poster})`;
+      if (accepted) div.classList.add("job-accepted");
+
+      let statusText = accepted ? `(Accepted)` : `(Open)`;
+      if (isAcceptedByCurrent) statusText = `(You accepted)`;
+
+      let paymentInfo = `Paycheck per job: $${paycheck.toFixed(2)}<br>Total paid: $${totalPaid.toFixed(2)}<br>Remaining to pay: $${remainingPayment.toFixed(2)}`;
+
+      let html = `
+        <strong>${job.name}</strong> ${statusText}<br />
+        ${paymentInfo}<br />
+      `;
+
+      // Buttons logic:
+      if (!accepted) {
+        html += `<button onclick="acceptJob('${jobKey}')">Accept Job</button>`;
+      } else {
+        if (isAcceptedByCurrent) {
+          // Worker can quit job anytime
+          html += `<button onclick="quitJob('${jobKey}')">Quit Job</button>`;
+          if (remainingPayment <= 0) {
+            html += `<br><em>Fully paid. Employer has no outstanding payments.</em>`;
+          } else {
+            html += `<br><em>Waiting for employer payment.</em>`;
+          }
+        }
+
+        // If current user is poster (employer), show pay button if job accepted and remaining payment > 0
+        if (job.poster === userKey) {
+          if (!accepted) {
+            html += `<em>No one accepted yet.</em>`;
+          } else {
+            html += `<br><input type="number" id="payAmount_${jobKey}" placeholder="Pay amount ($)" style="width: 100px" />`;
+            html += `<button onclick="payEmployee('${jobKey}')">Pay Employee</button>`;
+            html += `<button onclick="removeJob('${jobKey}')" style="margin-left:10px;">Remove Job</button>`;
+          }
+        }
+      }
+
+      div.innerHTML = html;
       list.appendChild(div);
     });
   });
 }
+
+function acceptJob(jobKey) {
+  const userKey = encodeEmail(currentEmail);
+  const jobRef = db.ref("jobs/" + jobKey);
+  jobRef.once('value').then(snap => {
+    const job = snap.val();
+    if (job.acceptedBy !== null) {
+      alert("This job is already accepted.");
+      loadJobs();
+      return;
+    }
+    jobRef.update({ acceptedBy: userKey }).then(loadJobs);
+  });
+}
+
+function quitJob(jobKey) {
+  const userKey = encodeEmail(currentEmail);
+  const jobRef = db.ref("jobs/" + jobKey);
+
+  jobRef.once('value').then(snap => {
+    const job = snap.val();
+    if (job.acceptedBy !== userKey) {
+      alert("You have not accepted this job.");
+      return;
+    }
+    // Reset acceptance and payments on quit:
+    jobRef.update({ acceptedBy: null, payments: 0, paymentsHistory: [] }).then(() => {
+      alert("You quit the job.");
+      loadJobs();
+    });
+  });
+}
+
+function payEmployee(jobKey) {
+  const userKey = encodeEmail(currentEmail);
+  const jobRef = db.ref("jobs/" + jobKey);
+
+  const payInput = document.getElementById("payAmount_" + jobKey);
+  if (!payInput) return;
+  const payAmountRaw = payInput.value.trim();
+  const payAmount = parseFloat(payAmountRaw);
+  if (isNaN(payAmount) || payAmount === 0) {
+    alert("Enter a valid non-zero payment amount.");
+    return;
+  }
+
+  jobRef.once('value').then(snap => {
+    const job = snap.val();
+    if (job.poster !== userKey) {
+      alert("Only the job poster can pay the employee.");
+      return;
+    }
+    if (job.acceptedBy === null) {
+      alert("No worker has accepted this job yet.");
+      return;
+    }
+
+    const posterRef = db.ref("users/" + job.poster);
+    const workerRef = db.ref("users/" + job.acceptedBy);
+
+    Promise.all([posterRef.once('value'), workerRef.once('value')]).then(results => {
+      const poster = results[0].val();
+      const worker = results[1].val();
+      if (!poster || !worker) {
+        alert("User data not found.");
+        return;
+      }
+
+      let newPosterBalance = poster.balance - payAmount; // employer can go negative (debt)
+      let newWorkerBalance = worker.balance + payAmount;
+
+      // No balance limit for poster (can go negative)
+      // Worker balance can be any number (no limit)
+
+      // Update balances
+      const updates = {};
+      updates[`users/${job.poster}/balance`] = newPosterBalance;
+      updates[`users/${job.acceptedBy}/balance`] = newWorkerBalance;
+
+      // Update job payment info
+      let newPayments = (job.payments || 0) + payAmount;
+      let newPaymentsHistory = job.paymentsHistory || [];
+      newPaymentsHistory.push({ amount: payAmount, date: Date.now() });
+
+      updates[`jobs/${jobKey}/payments`] = newPayments;
+      updates[`jobs/${jobKey}/paymentsHistory`] = newPaymentsHistory;
+
+      db.ref().update(updates).then(() => {
+        alert(`Paid $${payAmount.toFixed(2)} to the employee.`);
+        payInput.value = '';
+        loadJobs();
+      });
+    });
+  });
+}
+
+function removeJob(jobKey) {
+  if (!confirm("Remove this job? This action cannot be undone.")) return;
+  db.ref("jobs/" + jobKey).remove().then(loadJobs);
+}
+
 </script>
 
 </body>
