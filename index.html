@@ -261,6 +261,16 @@ function loadJobs() {
     snapshot.forEach(childSnap => {
       const job = childSnap.val();
       const jobKey = childSnap.key;
+
+      // Show job only if:
+      // 1) unaccepted
+      // 2) OR current user is the poster
+      // 3) OR current user is the accepted worker
+      if (job.acceptedBy !== null && job.acceptedBy !== userKey && job.poster !== userKey) {
+        // Skip this job - don't show to others if accepted
+        return;
+      }
+
       const accepted = job.acceptedBy !== null;
       const isAcceptedByCurrent = job.acceptedBy === userKey;
 
