@@ -8,6 +8,7 @@
     .hidden { display: none; }
     .tab { margin-top: 20px; }
     h2 { margin-bottom: 0; }
+    .job { margin: 5px 0; border-bottom: 1px dashed #0f0; padding-bottom: 5px; }
   </style>
 </head>
 <body>
@@ -23,16 +24,31 @@
 <div id="main" class="hidden">
   <h2>Welcome, <span id="userEmail"></span></h2>
   <button onclick="logout()">Logout</button>
-  
+
   <div id="adminPanel" class="tab hidden">
     <h2>Admin Panel</h2>
     <div id="userList"></div>
+    <h3>Create Job (free)</h3>
+    <input id="adminJob" placeholder="Job name" />
+    <button onclick="createJob(true)">Post Job</button>
+  </div>
+
+  <div id="employerPanel" class="tab hidden">
+    <h2>Employer Panel</h2>
+    <p>Create Job (costs $100)</p>
+    <input id="employerJob" placeholder="Job name" />
+    <button onclick="createJob(false)">Post Job</button>
   </div>
 
   <div id="userPanel" class="tab hidden">
     <h2>User Panel</h2>
     <p>Balance: $<span id="balance">0</span></p>
     <p>Role: <span id="role">Loading...</span></p>
+  </div>
+
+  <div class="tab">
+    <h2>Available Jobs</h2>
+    <div id="jobList"></div>
   </div>
 </div>
 
@@ -56,7 +72,7 @@ const db = firebase.database();
 let currentEmail = null;
 
 function encodeEmail(email) {
-  return email.replace(/\./g, '_'); // Firebase doesn't allow dots in keys
+  return email.replace(/\./g, '_');
 }
 
 function handleLogin(signUp) {
@@ -67,7 +83,8 @@ function handleLogin(signUp) {
   }
 
   currentEmail = email;
-  const userRef = db.ref('users/' + encodeEmail(email));
+  const userKey = encodeEmail(email);
+  const userRef = db.ref('users/' + userKey);
 
   userRef.once('value').then(snap => {
     const exists = snap.exists();
@@ -78,10 +95,12 @@ function handleLogin(signUp) {
     }
 
     if (!exists && signUp) {
-      const role = (email === "admin@ezradc.com") ? "admin" : "worker";
-      userRef.set({ email, role, balance: 1000 });
+      const role = email.includes("admin") ? "admin" : "worker";
+      const balance = role === "admin" ? 1000 : 0;
+      userRef.set({ email, role, balance });
     }
 
+    db.ref('online/' + userKey).set(true);
     document.getElementById("userEmail").textContent = email;
     document.getElementById("login").style.display = "none";
     document.getElementById("main").classList.remove("hidden");
@@ -92,18 +111,23 @@ function handleLogin(signUp) {
       document.getElementById("balance").textContent = data.balance;
 
       if (data.role === "admin") {
-        loadAdminPanel();
         document.getElementById("adminPanel").classList.remove("hidden");
+        document.getElementById("employerPanel").classList.add("hidden");
         document.getElementById("userPanel").classList.add("hidden");
+        loadAdminPanel();
       } else {
+        document.getElementById("employerPanel").classList.remove("hidden");
         document.getElementById("userPanel").classList.remove("hidden");
         document.getElementById("adminPanel").classList.add("hidden");
       }
     });
+
+    loadJobs();
   });
 }
 
 function logout() {
+  db.ref('online/' + encodeEmail(currentEmail)).remove();
   location.reload();
 }
 
@@ -126,8 +150,49 @@ function loadAdminPanel() {
 }
 
 function changeBalance(userKey, newAmount) {
-  db.ref("users/" + userKey + "/balance").set(newAmount).then(() => {
-    loadAdminPanel();
+  db.ref("users/" + userKey + "/balance").set(newAmount).then(loadAdminPanel);
+}
+
+function createJob(isAdmin) {
+  const inputId = isAdmin ? "adminJob" : "employerJob";
+  const jobName = document.getElementById(inputId).value.trim();
+  if (!jobName) return;
+
+  const userKey = encodeEmail(currentEmail);
+  const userRef = db.ref("users/" + userKey);
+  userRef.once('value').then(snap => {
+    const user = snap.val();
+    if (!isAdmin && user.balance < 100) {
+      alert("Not enough money to post job.");
+      return;
+    }
+
+    const job = {
+      name: jobName,
+      poster: user.email
+    };
+
+    const jobRef = db.ref("jobs").push();
+    jobRef.set(job).then(() => {
+      if (!isAdmin) {
+        userRef.update({ balance: user.balance - 100 });
+      }
+      loadJobs();
+    });
+  });
+}
+
+function loadJobs() {
+  const list = document.getElementById("jobList");
+  db.ref("jobs").once('value').then(snapshot => {
+    list.innerHTML = '';
+    snapshot.forEach(childSnap => {
+      const job = childSnap.val();
+      const div = document.createElement("div");
+      div.className = "job";
+      div.textContent = `${job.name} (by ${job.poster})`;
+      list.appendChild(div);
+    });
   });
 }
 </script>
