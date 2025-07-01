@@ -1,72 +1,42 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Bank + Jobs App</title>
-<style>
-  body { font-family: monospace; background: #111; color: #0f0; margin: 0; padding: 10px; }
-  input, button, select { font-size: 16px; margin: 5px 0; }
-  #tabs { margin-top: 20px; }
-  .tab { display: none; }
-  .tab.active { display: block; }
-  #navTabs button { margin-right: 10px; }
-</style>
+  <title>Multi-User App with Admin Panel</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #0f0; padding: 10px; }
+    input, button { font-size: 16px; margin: 5px 0; }
+    .hidden { display: none; }
+    .tab { margin-top: 20px; }
+    h2 { margin-bottom: 0; }
+  </style>
 </head>
 <body>
 
-<h1>Bank & Jobs System</h1>
+<h1>Login</h1>
+<input id="email" placeholder="Enter your email (no password needed)" />
+<button onclick="fakeLogin()">Enter</button>
+<div id="status"></div>
 
-<div id="loginDiv">
-  <input id="email" type="email" placeholder="Email" /><br />
-  <input id="password" type="password" placeholder="Password" /><br />
-  <button onclick="login()">Login</button>
-  <button onclick="signup()">Sign Up</button>
-  <div id="loginMsg"></div>
-</div>
-
-<div id="mainDiv" style="display:none;">
-  <div>Logged in as: <span id="userEmail"></span> (<span id="userRole"></span>) <button onclick="logout()">Logout</button></div>
-
-  <div id="navTabs">
-    <button onclick="showTab('workerTab')" id="workerTabBtn">Worker</button>
-    <button onclick="showTab('employerTab')" id="employerTabBtn">Employer</button>
+<div id="main" class="hidden">
+  <h2>Welcome, <span id="userEmail"></span></h2>
+  <button onclick="logout()">Logout</button>
+  
+  <div id="adminPanel" class="tab hidden">
+    <h2>Admin Panel</h2>
+    <div id="userList"></div>
   </div>
 
-  <div id="tabs">
-    <!-- Worker Tab -->
-    <div id="workerTab" class="tab">
-      <h2>Worker Dashboard</h2>
-      <p>Balance: $<span id="workerBalance">0</span></p>
-      <h3>Available Jobs</h3>
-      <div id="jobsList"></div>
-      <h3>Your Active Jobs</h3>
-      <div id="workerActiveJobs"></div>
-    </div>
-
-    <!-- Employer Tab -->
-    <div id="employerTab" class="tab">
-      <h2>Employer Dashboard</h2>
-      <p>Balance: $<span id="employerBalance">0</span></p>
-
-      <h3>Post New Job</h3>
-      <input id="jobTitle" placeholder="Job Title" /><br />
-      <input id="jobPay" type="number" placeholder="Pay Amount" /><br />
-      <textarea id="jobDesc" placeholder="Job Description" rows="3" cols="40"></textarea><br />
-      <button onclick="postJob()">Post Job (pay upfront)</button>
-
-      <h3>Your Posted Jobs</h3>
-      <div id="employerJobs"></div>
-    </div>
+  <div id="userPanel" class="tab hidden">
+    <h2>User Panel</h2>
+    <p>Balance: $<span id="balance">0</span></p>
+    <p>Role: <span id="role">Loading...</span></p>
   </div>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.5.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.5.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.5.2/firebase-database-compat.js"></script>
 
 <script>
-  // === REPLACE THIS WITH YOUR FIREBASE CONFIG ===
 const firebaseConfig = {
   apiKey: "AIzaSyARi8vPI9ywj-ysCq6rif510IzdYqXbK3g",
   authDomain: "bank-8b556.firebaseapp.com",
@@ -77,264 +47,84 @@ const firebaseConfig = {
   appId: "1:834440794933:web:9879989f8a757a1d7cf27c",
   measurementId: "G-460KL9LMPT"
 };
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
 
-  firebase.initializeApp(firebaseConfig);
-  const auth = firebase.auth();
-  const db = firebase.database();
+let currentEmail = null;
 
-  let currentUserId = null;
-  let currentUserRole = null;
-
-  // Show/hide tabs
-  function showTab(tabId) {
-    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-    document.getElementById(tabId).classList.add("active");
+function fakeLogin() {
+  const email = document.getElementById("email").value.trim().toLowerCase();
+  if (!email) {
+    document.getElementById("status").textContent = "Please enter an email.";
+    return;
   }
 
-  // Login function
-  function login() {
-    const email = document.getElementById("email").value.trim();
-    const password = document.getElementById("password").value;
-    if (!email || !password) {
-      document.getElementById("loginMsg").textContent = "Please enter email and password";
-      return;
-    }
-    auth.signInWithEmailAndPassword(email, password)
-      .then(userCredential => {
-        currentUserId = userCredential.user.uid;
-        loadUserProfile();
-      })
-      .catch(e => {
-        document.getElementById("loginMsg").textContent = e.message;
+  currentEmail = email;
+  document.getElementById("userEmail").textContent = email;
+  document.getElementById("login").style.display = "none";
+  document.getElementById("main").classList.remove("hidden");
+
+  const userRef = db.ref('users/' + encodeEmail(email));
+
+  userRef.once('value').then(snap => {
+    if (!snap.exists()) {
+      // Create new user with default role and balance
+      const role = (email === "admin@ezradc.com") ? "admin" : "worker";
+      userRef.set({
+        email: email,
+        role: role,
+        balance: 1000
       });
-  }
-
-  // Signup function
-  function signup() {
-    const email = document.getElementById("email").value.trim();
-    const password = document.getElementById("password").value;
-    if (!email || !password) {
-      document.getElementById("loginMsg").textContent = "Please enter email and password";
-      return;
     }
-    auth.createUserWithEmailAndPassword(email, password)
-      .then(userCredential => {
-        currentUserId = userCredential.user.uid;
-        // Ask user role on signup (simple prompt)
-        let role = prompt("Enter role: worker or employer").toLowerCase();
-        if (role !== "worker" && role !== "employer") role = "worker";
-        // Save user profile
-        db.ref('users/' + currentUserId).set({
-          email: email,
-          role: role,
-          balance: 1000,
-          activeJobs: {},
-          jobsPosted: {}
-        }).then(() => {
-          loadUserProfile();
-        });
-      })
-      .catch(e => {
-        document.getElementById("loginMsg").textContent = e.message;
-      });
-  }
 
-  // Load user profile and show UI
-  function loadUserProfile() {
-    db.ref('users/' + currentUserId).once('value').then(snap => {
-      const user = snap.val();
-      if (!user) {
-        alert("User profile not found");
-        logout();
-        return;
-      }
-      currentUserRole = user.role;
-      document.getElementById("userEmail").textContent = user.email;
-      document.getElementById("userRole").textContent = user.role;
-      document.getElementById("loginDiv").style.display = "none";
-      document.getElementById("mainDiv").style.display = "block";
+    userRef.on('value', userSnap => {
+      const data = userSnap.val();
+      document.getElementById("role").textContent = data.role;
+      document.getElementById("balance").textContent = data.balance;
 
-      if (currentUserRole === "worker") {
-        document.getElementById("employerTabBtn").style.display = "none";
-        showTab("workerTab");
-        listenWorkerData();
-      } else if (currentUserRole === "employer") {
-        document.getElementById("workerTabBtn").style.display = "none";
-        showTab("employerTab");
-        listenEmployerData();
+      if (data.role === "admin") {
+        loadAdminPanel();
+        document.getElementById("adminPanel").classList.remove("hidden");
+        document.getElementById("userPanel").classList.add("hidden");
       } else {
-        alert("Unknown role");
+        document.getElementById("userPanel").classList.remove("hidden");
+        document.getElementById("adminPanel").classList.add("hidden");
       }
     });
-  }
-
-  // Logout
-  function logout() {
-    auth.signOut().then(() => {
-      currentUserId = null;
-      currentUserRole = null;
-      document.getElementById("mainDiv").style.display = "none";
-      document.getElementById("loginDiv").style.display = "block";
-      document.getElementById("loginMsg").textContent = "Logged out";
-      document.getElementById("email").value = "";
-      document.getElementById("password").value = "";
-      document.getElementById("workerTabBtn").style.display = "inline";
-      document.getElementById("employerTabBtn").style.display = "inline";
-    });
-  }
-
-  // ===== Worker functionality =====
-  function listenWorkerData() {
-    // Listen balance
-    db.ref('users/' + currentUserId + '/balance').on('value', snap => {
-      document.getElementById("workerBalance").textContent = snap.val() || 0;
-    });
-
-    // Listen available jobs NOT created by current user
-    db.ref('jobs').on('value', snap => {
-      const jobsDiv = document.getElementById("jobsList");
-      jobsDiv.innerHTML = '';
-      snap.forEach(jobSnap => {
-        const job = jobSnap.val();
-        const jobId = jobSnap.key;
-        if (job.active && job.createdBy !== currentUserId) {
-          const div = document.createElement('div');
-          div.textContent = `${job.title} - $${job.pay}`;
-          const btn = document.createElement('button');
-          btn.textContent = 'Accept Job';
-          btn.onclick = () => acceptJob(jobId, job.pay);
-          div.appendChild(document.createTextNode(' '));
-          div.appendChild(btn);
-          jobsDiv.appendChild(div);
-        }
-      });
-    });
-
-    // Listen active jobs
-    db.ref('users/' + currentUserId + '/activeJobs').on('value', snap => {
-      const myJobsDiv = document.getElementById("workerActiveJobs");
-      myJobsDiv.innerHTML = '';
-      const activeJobs = snap.val() || {};
-      Object.keys(activeJobs).forEach(jobId => {
-        db.ref('jobs/' + jobId).once('value').then(jobSnap => {
-          const job = jobSnap.val();
-          if (!job) {
-            // job deleted, remove from user activeJobs
-            db.ref('users/' + currentUserId + '/activeJobs/' + jobId).remove();
-            return;
-          }
-          const div = document.createElement('div');
-          div.textContent = `${job.title} - $${job.pay} `;
-          const quitBtn = document.createElement('button');
-          quitBtn.textContent = 'Quit Job';
-          quitBtn.onclick = () => quitJob(jobId);
-          div.appendChild(quitBtn);
-          myJobsDiv.appendChild(div);
-        });
-      });
-    });
-  }
-
-  function acceptJob(jobId, pay) {
-    // Add job to user's activeJobs
-    db.ref('users/' + currentUserId + '/activeJobs/' + jobId).set(true);
-    // Mark user assigned in job
-    db.ref('jobs/' + jobId + '/assignedUsers/' + currentUserId).set('working');
-    alert('Job accepted!');
-  }
-
-  function quitJob(jobId) {
-    db.ref('users/' + currentUserId + '/activeJobs/' + jobId).remove();
-    db.ref('jobs/' + jobId + '/assignedUsers/' + currentUserId).remove();
-    alert('You quit the job.');
-  }
-
-  // ===== Employer functionality =====
-  function listenEmployerData() {
-    // Listen employer balance
-    db.ref('users/' + currentUserId + '/balance').on('value', snap => {
-      document.getElementById("employerBalance").textContent = snap.val() || 0;
-    });
-
-    // Listen jobs created by this employer
-    db.ref('jobs').orderByChild('createdBy').equalTo(currentUserId).on('value', snap => {
-      const employerJobsDiv = document.getElementById("employerJobs");
-      employerJobsDiv.innerHTML = '';
-      snap.forEach(jobSnap => {
-        const job = jobSnap.val();
-        const jobId = jobSnap.key;
-        const div = document.createElement('div');
-        div.innerHTML = `<strong>${job.title}</strong> - $${job.pay} <br>${job.description}<br>`;
-
-        // List assigned users
-        if (job.assignedUsers) {
-          div.innerHTML += `<em>Assigned users:</em><br>`;
-          Object.keys(job.assignedUsers).forEach(uid => {
-            div.innerHTML += ` - ${uid} - Status: ${job.assignedUsers[uid]} <button onclick="payUser('${jobId}', '${uid}', ${job.pay})">Pay</button><br>`;
-          });
-        } else {
-          div.innerHTML += 'No users assigned.<br>';
-        }
-        employerJobsDiv.appendChild(div);
-      });
-    });
-  }
-
-  function postJob() {
-    const title = document.getElementById("jobTitle").value.trim();
-    const pay = parseInt(document.getElementById("jobPay").value);
-    const desc = document.getElementById("jobDesc").value.trim();
-
-    if (!title || !desc || isNaN(pay) || pay <= 0) {
-      alert("Please fill in all job fields with valid data.");
-      return;
-    }
-
-    // Check employer balance before posting
-    db.ref('users/' + currentUserId).once('value').then(snap => {
-      const data = snap.val();
-      if (data.balance < pay) {
-        alert("Insufficient balance to post job!");
-        return;
-      }
-      // Deduct pay upfront
-      db.ref('users/' + currentUserId + '/balance').set(data.balance - pay).then(() => {
-        // Add job
-        const newJobRef = db.ref('jobs').push();
-        newJobRef.set({
-          title,
-          pay,
-          description: desc,
-          createdBy: currentUserId,
-          active: true,
-          assignedUsers: {}
-        });
-        alert("Job posted successfully!");
-        document.getElementById("jobTitle").value = '';
-        document.getElementById("jobPay").value = '';
-        document.getElementById("jobDesc").value = '';
-      });
-    });
-  }
-
-  function payUser(jobId, userId, amount) {
-    // Give user money and mark paid
-    const userBalanceRef = db.ref('users/' + userId + '/balance');
-    userBalanceRef.transaction(balance => (balance || 0) + amount);
-
-    // Mark payment done on job's assignedUsers
-    db.ref('jobs/' + jobId + '/assignedUsers/' + userId).set('paid');
-
-    alert(`Paid $${amount} to user ${userId}`);
-  }
-
-  // Auto-login on page load
-  auth.onAuthStateChanged(user => {
-    if (user) {
-      currentUserId = user.uid;
-      loadUserProfile();
-    }
   });
+}
+
+function logout() {
+  location.reload();
+}
+
+function encodeEmail(email) {
+  return email.replace(/\./g, '_'); // Firebase doesn't allow dots in keys
+}
+
+function loadAdminPanel() {
+  const listDiv = document.getElementById("userList");
+  db.ref("users").once('value').then(snapshot => {
+    listDiv.innerHTML = '';
+    snapshot.forEach(childSnap => {
+      const user = childSnap.val();
+      const key = childSnap.key;
+      const row = document.createElement("div");
+      row.innerHTML = `
+        ${user.email} - ${user.role} - $${user.balance}
+        <button onclick="changeBalance('${key}', ${user.balance + 100})">+100</button>
+        <button onclick="changeBalance('${key}', ${user.balance - 100})">-100</button>
+      `;
+      listDiv.appendChild(row);
+    });
+  });
+}
+
+function changeBalance(userKey, newAmount) {
+  db.ref("users/" + userKey + "/balance").set(newAmount).then(() => {
+    loadAdminPanel();
+  });
+}
 </script>
 
 </body>
