@@ -141,16 +141,32 @@ function loadAdminPanel() {
       const row = document.createElement("div");
       row.innerHTML = `
         ${user.email} - ${user.role} - $${user.balance}
-        <button onclick="changeBalance('${key}', ${user.balance + 100})">+100</button>
-        <button onclick="changeBalance('${key}', ${user.balance - 100})">-100</button>
+        <input type="number" id="amount_${key}" placeholder="Amount" style="width:80px" />
+        <button onclick="adjustBalance('${key}', 'add')">Give</button>
+        <button onclick="adjustBalance('${key}', 'subtract')">Remove</button>
+        <button onclick="adjustBalance('${key}', 'zero')">Set $0</button>
       `;
       listDiv.appendChild(row);
     });
   });
 }
 
-function changeBalance(userKey, newAmount) {
-  db.ref("users/" + userKey + "/balance").set(newAmount).then(loadAdminPanel);
+function adjustBalance(userKey, action) {
+  const amountField = document.getElementById("amount_" + userKey);
+  const amount = parseInt(amountField.value);
+  if ((isNaN(amount) || amount < 0) && action !== 'zero') return;
+  const userRef = db.ref("users/" + userKey);
+
+  userRef.once('value').then(snap => {
+    const user = snap.val();
+    let newBalance = user.balance;
+
+    if (action === 'add') newBalance += amount;
+    else if (action === 'subtract') newBalance = Math.max(0, user.balance - amount);
+    else if (action === 'zero') newBalance = 0;
+
+    userRef.update({ balance: newBalance }).then(loadAdminPanel);
+  });
 }
 
 function createJob(isAdmin) {
