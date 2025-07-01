@@ -36,6 +36,8 @@
     <button onclick="createJob(true)">Post Job</button>
   </div>
 
+  <button id="showAdminBtn" class="small-btn hidden" onclick="toggleAdminPanelVisibility()">Show Admin Panel</button>
+
   <div id="employerPanel" class="tab hidden">
     <h2>Employer Panel</h2>
     <p>Create Job (costs $100)</p>
@@ -74,6 +76,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 let currentEmail = null;
+let currentUserRole = null;
 let adminPanelVisible = true;
 
 function encodeEmail(email) {
@@ -112,14 +115,17 @@ function handleLogin(signUp) {
 
     userRef.on('value', userSnap => {
       const data = userSnap.val();
+      currentUserRole = data.role;
       document.getElementById("role").textContent = data.role;
       document.getElementById("balance").textContent = data.balance;
 
       if (data.role === "admin") {
         if (adminPanelVisible) {
           document.getElementById("adminPanel").classList.remove("hidden");
+          document.getElementById("showAdminBtn").classList.add("hidden");
         } else {
           document.getElementById("adminPanel").classList.add("hidden");
+          document.getElementById("showAdminBtn").classList.remove("hidden");
         }
         document.getElementById("employerPanel").classList.add("hidden");
         document.getElementById("userPanel").classList.add("hidden");
@@ -128,11 +134,13 @@ function handleLogin(signUp) {
         document.getElementById("employerPanel").classList.add("hidden");
         document.getElementById("userPanel").classList.remove("hidden");
         document.getElementById("adminPanel").classList.add("hidden");
+        document.getElementById("showAdminBtn").classList.add("hidden");
       } else {
         // employer
         document.getElementById("employerPanel").classList.remove("hidden");
         document.getElementById("userPanel").classList.remove("hidden");
         document.getElementById("adminPanel").classList.add("hidden");
+        document.getElementById("showAdminBtn").classList.add("hidden");
       }
     });
 
@@ -186,8 +194,14 @@ function adjustBalance(userKey, action) {
 function toggleAdminPanelVisibility() {
   adminPanelVisible = !adminPanelVisible;
   const adminPanel = document.getElementById("adminPanel");
-  if (adminPanelVisible) adminPanel.classList.remove("hidden");
-  else adminPanel.classList.add("hidden");
+  const showBtn = document.getElementById("showAdminBtn");
+  if (adminPanelVisible) {
+    adminPanel.classList.remove("hidden");
+    showBtn.classList.add("hidden");
+  } else {
+    adminPanel.classList.add("hidden");
+    showBtn.classList.remove("hidden");
+  }
 }
 
 function createJob(isAdmin) {
@@ -222,9 +236,9 @@ function createJob(isAdmin) {
       name: jobName,
       paycheck: paycheck,
       poster: userKey,
-      acceptedBy: null, // no one accepted yet
-      payments: 0,     // total payments made
-      paymentsHistory: [] // array of payments {amount, date}
+      acceptedBy: null,
+      payments: 0,
+      paymentsHistory: []
     };
 
     const jobRef = db.ref("jobs").push();
@@ -232,7 +246,6 @@ function createJob(isAdmin) {
       if (!isAdmin) {
         userRef.update({ balance: user.balance - 100 });
       }
-      // clear inputs
       document.getElementById(inputId).value = '';
       document.getElementById(paycheckId).value = '';
       loadJobs();
@@ -274,7 +287,6 @@ function loadJobs() {
         html += `<button onclick="acceptJob('${jobKey}')">Accept Job</button>`;
       } else {
         if (isAcceptedByCurrent) {
-          // Worker can quit job anytime
           html += `<button onclick="quitJob('${jobKey}')">Quit Job</button>`;
           if (remainingPayment <= 0) {
             html += `<br><em>Fully paid. Employer has no outstanding payments.</em>`;
@@ -283,15 +295,21 @@ function loadJobs() {
           }
         }
 
-        // If current user is poster (employer), show pay button if job accepted and remaining payment > 0
+        // Employer buttons
         if (job.poster === userKey) {
           if (!accepted) {
             html += `<em>No one accepted yet.</em>`;
           } else {
             html += `<br><input type="number" id="payAmount_${jobKey}" placeholder="Pay amount ($)" style="width: 100px" />`;
             html += `<button onclick="payEmployee('${jobKey}')">Pay Employee</button>`;
-            html += `<button onclick="removeJob('${jobKey}')" style="margin-left:10px;">Remove Job</button>`;
           }
+          // Employer can always remove their own jobs
+          html += `<button onclick="removeJob('${jobKey}')" style="margin-left:10px;">Remove Job</button>`;
+        }
+
+        // Admin can remove any job
+        if (currentUserRole === 'admin' && job.poster !== userKey) {
+          html += `<button onclick="removeJob('${jobKey}')" style="margin-left:10px;">Remove Job (Admin)</button>`;
         }
       }
 
@@ -325,7 +343,6 @@ function quitJob(jobKey) {
       alert("You have not accepted this job.");
       return;
     }
-    // Reset acceptance and payments on quit:
     jobRef.update({ acceptedBy: null, payments: 0, paymentsHistory: [] }).then(() => {
       alert("You quit the job.");
       loadJobs();
@@ -371,15 +388,10 @@ function payEmployee(jobKey) {
       let newPosterBalance = poster.balance - payAmount; // employer can go negative (debt)
       let newWorkerBalance = worker.balance + payAmount;
 
-      // No balance limit for poster (can go negative)
-      // Worker balance can be any number (no limit)
-
-      // Update balances
       const updates = {};
       updates[`users/${job.poster}/balance`] = newPosterBalance;
       updates[`users/${job.acceptedBy}/balance`] = newWorkerBalance;
 
-      // Update job payment info
       let newPayments = (job.payments || 0) + payAmount;
       let newPaymentsHistory = job.paymentsHistory || [];
       newPaymentsHistory.push({ amount: payAmount, date: Date.now() });
@@ -398,9 +410,19 @@ function payEmployee(jobKey) {
 
 function removeJob(jobKey) {
   if (!confirm("Remove this job? This action cannot be undone.")) return;
-  db.ref("jobs/" + jobKey).remove().then(loadJobs);
+  db.ref("jobs/" + jobKey).once('value').then(snap => {
+    const job = snap.val();
+    if (!job) return alert("Job does not exist.");
+    // Admin can remove any job
+    // Employer can only remove their own jobs
+    const userKey = encodeEmail(currentEmail);
+    if (currentUserRole === 'admin' || job.poster === userKey) {
+      db.ref("jobs/" + jobKey).remove().then(loadJobs);
+    } else {
+      alert("You do not have permission to remove this job.");
+    }
+  });
 }
-
 </script>
 
 </body>
