@@ -4,7 +4,7 @@
   <title>Multi-User App with Admin Panel</title>
   <style>
     body { font-family: monospace; background: #111; color: #0f0; padding: 10px; }
-    input, button { font-size: 16px; margin: 5px 0; }
+    input, button { font-size: 16px; margin: 5px 5px 5px 0; }
     .hidden { display: none; }
     .tab { margin-top: 20px; }
     h2 { margin-bottom: 0; }
@@ -12,10 +12,13 @@
 </head>
 <body>
 
-<h1>Login</h1>
-<input id="email" placeholder="Enter your email (no password needed)" />
-<button onclick="fakeLogin()">Enter</button>
-<div id="status"></div>
+<div id="login">
+  <h1>Sign In / Login</h1>
+  <input id="email" placeholder="Enter your email" />
+  <button onclick="handleLogin(true)">Sign Up</button>
+  <button onclick="handleLogin(false)">Login</button>
+  <div id="status"></div>
+</div>
 
 <div id="main" class="hidden">
   <h2>Welcome, <span id="userEmail"></span></h2>
@@ -42,7 +45,7 @@ const firebaseConfig = {
   authDomain: "bank-8b556.firebaseapp.com",
   databaseURL: "https://bank-8b556-default-rtdb.firebaseio.com",
   projectId: "bank-8b556",
-  storageBucket: "bank-8b556.firebasestorage.app",
+  storageBucket: "bank-8b556.appspot.com",
   messagingSenderId: "834440794933",
   appId: "1:834440794933:web:9879989f8a757a1d7cf27c",
   measurementId: "G-460KL9LMPT"
@@ -52,7 +55,11 @@ const db = firebase.database();
 
 let currentEmail = null;
 
-function fakeLogin() {
+function encodeEmail(email) {
+  return email.replace(/\./g, '_'); // Firebase doesn't allow dots in keys
+}
+
+function handleLogin(signUp) {
   const email = document.getElementById("email").value.trim().toLowerCase();
   if (!email) {
     document.getElementById("status").textContent = "Please enter an email.";
@@ -60,22 +67,24 @@ function fakeLogin() {
   }
 
   currentEmail = email;
-  document.getElementById("userEmail").textContent = email;
-  document.getElementById("login").style.display = "none";
-  document.getElementById("main").classList.remove("hidden");
-
   const userRef = db.ref('users/' + encodeEmail(email));
 
   userRef.once('value').then(snap => {
-    if (!snap.exists()) {
-      // Create new user with default role and balance
-      const role = (email === "admin@ezradc.com") ? "admin" : "worker";
-      userRef.set({
-        email: email,
-        role: role,
-        balance: 1000
-      });
+    const exists = snap.exists();
+
+    if (!exists && !signUp) {
+      document.getElementById("status").textContent = "User not found. Please sign up first.";
+      return;
     }
+
+    if (!exists && signUp) {
+      const role = (email === "admin@ezradc.com") ? "admin" : "worker";
+      userRef.set({ email, role, balance: 1000 });
+    }
+
+    document.getElementById("userEmail").textContent = email;
+    document.getElementById("login").style.display = "none";
+    document.getElementById("main").classList.remove("hidden");
 
     userRef.on('value', userSnap => {
       const data = userSnap.val();
@@ -96,10 +105,6 @@ function fakeLogin() {
 
 function logout() {
   location.reload();
-}
-
-function encodeEmail(email) {
-  return email.replace(/\./g, '_'); // Firebase doesn't allow dots in keys
 }
 
 function loadAdminPanel() {
